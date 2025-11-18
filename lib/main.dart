@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/date_symbol_data_file.dart';
 import 'screens/login_screen.dart';
 import 'screens/register.dart';
 import 'screens/dashboard.dart';
@@ -7,7 +8,10 @@ import 'screens/order.dart';
 import 'screens/profile.dart';
 import 'screens/confirmorder.dart';
 
-void main() {
+void main() async {
+  // WidgetsFlutterBinding.ensureInitialized();
+  // await initializeDateFormatting('id_ID',"");
+
   runApp(const MyApp());
 }
 

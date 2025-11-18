@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:laundry_mobile/services/api_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dashboard.dart';
-import 'register.dart'; // 🟢 Tambah ini
+import 'register.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -19,44 +19,44 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _errorMessage;
 
   Future<void> _loginApi() async {
+    if (_usernameController.text.isEmpty || _passwordController.text.isEmpty) {
+      setState(() {
+        _errorMessage = "Username dan password harus diisi";
+      });
+      return;
+    }
+
     setState(() {
       _loading = true;
       _errorMessage = null;
     });
 
     try {
-      final response = await http.post(
-        Uri.parse("http://192.168.1.2:8000/api/login"),
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-        },
-        body: jsonEncode({
-          "username": _usernameController.text.trim(),
-          "password": _passwordController.text.trim(),
-        }),
+      // GUNAKAN ApiService untuk login
+      final response = await ApiService.login(
+        _usernameController.text.trim(),
+        _passwordController.text.trim(),
       );
 
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 200 && data["success"] == true) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString("token", data["token"]);
-
+      if (response['success'] == true) {
+        // Navigate ke dashboard
+        final userData = response['data']['user'];
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (_) =>
-                DashboardScreen(username: data["user"]["username"] ?? "User"),
+            builder: (_) => DashboardScreen(
+              username: userData['username'] ?? "User",
+            ),
           ),
         );
       } else {
         setState(() {
-          _errorMessage = data["message"] ?? "Login gagal.";
+          _errorMessage = response['message'] ?? "Login gagal. Periksa username dan password.";
         });
       }
     } catch (e) {
       setState(() {
-        _errorMessage = "Gagal terhubung ke server: $e";
+        _errorMessage = "Login gagal: $e";
       });
     } finally {
       setState(() {
@@ -102,15 +102,52 @@ class _LoginScreenState extends State<LoginScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   const SizedBox(height: 80),
+                  
+                  // Logo/Icon
+                  Container(
+                    width: 100,
+                    height: 100,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(50),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.2),
+                          blurRadius: 10,
+                          offset: const Offset(0, 5),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.local_laundry_service,
+                      size: 50,
+                      color: primaryColor,
+                    ),
+                  ),
+                  
+                  const SizedBox(height: 20),
+                  
                   const Text(
-                    'Login',
+                    'Laundry Express',
                     style: TextStyle(
-                      fontSize: 32,
+                      fontSize: 28,
                       fontWeight: FontWeight.bold,
                       color: Colors.white,
                     ),
                   ),
+                  
+                  const SizedBox(height: 5),
+                  
+                  const Text(
+                    'Login ke Akun Anda',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Colors.white70,
+                    ),
+                  ),
+                  
                   const SizedBox(height: 30),
+                  
                   Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
@@ -138,51 +175,84 @@ class _LoginScreenState extends State<LoginScreen> {
                           icon: Icons.lock_outline,
                           isPassword: true,
                         ),
+                        
+                        // Error Message
                         if (_errorMessage != null)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 10),
-                            child: Text(
-                              _errorMessage!,
-                              style: const TextStyle(color: Colors.red),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.red[50],
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.red[200]!),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.error_outline, color: Colors.red, size: 16),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    _errorMessage!,
+                                    style: const TextStyle(
+                                      color: Colors.red,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
+                        
                         const SizedBox(height: 20),
+                        
+                        // Login Button
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton(
                             onPressed: _loading ? null : _loginApi,
                             style: ElevatedButton.styleFrom(
                               backgroundColor: primaryColor,
+                              foregroundColor: Colors.white,
                               padding: const EdgeInsets.symmetric(vertical: 15),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(10),
                               ),
+                              elevation: 3,
                             ),
                             child: _loading
-                                ? const CircularProgressIndicator(
-                                    color: Colors.white,
+                                ? const SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
                                   )
                                 : const Text(
                                     "LOGIN",
                                     style: TextStyle(
                                       fontWeight: FontWeight.bold,
                                       fontSize: 16,
-                                      color: Colors.white,
                                     ),
                                   ),
                           ),
                         ),
-                        const SizedBox(height: 10),
+                        
+                        const SizedBox(height: 15),
+                        
+                        // Register Link
                         Center(
                           child: GestureDetector(
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => const RegisterScreen(),
-                                ),
-                              );
-                            },
+                            onTap: _loading
+                                ? null
+                                : () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => const RegisterScreen(),
+                                      ),
+                                    );
+                                  },
                             child: const Text(
                               "Belum punya akun? Daftar di sini",
                               style: TextStyle(
@@ -223,10 +293,17 @@ class _LoginScreenState extends State<LoginScreen> {
             horizontal: 15,
             vertical: 12,
           ),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: Colors.grey),
+          ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
             borderSide: const BorderSide(color: primaryColor, width: 2),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: Colors.grey),
           ),
         ),
       ),
@@ -234,7 +311,6 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-// 🟢 WavePainter dipakai bersama Register
 class WavePainter extends CustomPainter {
   final Color waveColor;
   final bool isTop;
