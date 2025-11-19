@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:intl/date_symbol_data_local.dart'; // Tambahkan ini
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:laundry_mobile/services/api_service.dart';
+import 'package:pdf/pdf.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
 import 'payment_page.dart';
 
 class OrderListPage extends StatefulWidget {
@@ -17,17 +22,29 @@ class _OrderListPageState extends State<OrderListPage> {
   bool _isLoading = true;
   bool _hasError = false;
   String _errorMessage = '';
-  bool _isDateFormatInitialized = false; // Tambahkan flag ini
+  bool _isDateFormatInitialized = false;
+  Map<String, dynamic>? _userData;
 
   @override
   void initState() {
     super.initState();
+    _loadUserData();
     _initializeDateFormatting().then((_) {
       _fetchPesananUser();
     });
   }
 
-  // Tambahkan method untuk inisialisasi date formatting
+  Future<void> _loadUserData() async {
+    try {
+      final userData = await ApiService.getStoredUser();
+      setState(() {
+        _userData = userData;
+      });
+    } catch (e) {
+      print('Error loading user data: $e');
+    }
+  }
+
   Future<void> _initializeDateFormatting() async {
     try {
       await initializeDateFormatting('id_ID', null);
@@ -35,8 +52,6 @@ class _OrderListPageState extends State<OrderListPage> {
         _isDateFormatInitialized = true;
       });
     } catch (e) {
-      // ApiService._debugPrint('Error initializing date formatting: $e');
-      // Tetap lanjutkan meskipun ada error
       setState(() {
         _isDateFormatInitialized = true;
       });
@@ -51,13 +66,12 @@ class _OrderListPageState extends State<OrderListPage> {
 
     try {
       final response = await ApiService.getPesananUser();
-      
+
       if (response['success'] == true) {
         setState(() {
           _pesananList = response['data'] ?? [];
           _isLoading = false;
         });
-        // ApiService._debugPrint('✅ Loaded ${_pesananList.length} orders');
       } else {
         setState(() {
           _hasError = true;
@@ -71,8 +85,304 @@ class _OrderListPageState extends State<OrderListPage> {
         _errorMessage = 'Terjadi kesalahan: $e';
         _isLoading = false;
       });
-      // ApiService._debugPrint('💥 Error fetching orders: $e');
     }
+  }
+
+  // TAMPILKAN MODAL NOTA
+  void _showNotaModal(Map<String, dynamic> order) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => NotaModal(
+        pesananData: order,
+        userData: _userData!,
+        onDownloadPDF: _generatePDF,
+      ),
+    );
+  }
+// Minta Permission Storage
+Future<bool> _requestPermission() async {
+  try {
+    if (await Permission.storage.request().isGranted) {
+      return true;
+    } else {
+      final status = await Permission.storage.request();
+      return status.isGranted;
+    }
+  } catch (e) {
+    print('Permission error: $e');
+    return false;
+  }
+}
+
+// Dapatkan path folder Download
+Future<String?> _getDownloadsDirectory() async {
+  if (Platform.isAndroid) {
+    // Untuk Android, gunakan external storage
+    final directory = await getExternalStorageDirectory();
+    if (directory != null) {
+      final downloadsPath = '${directory.path}/Download';
+      final dir = Directory(downloadsPath);
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+      return downloadsPath;
+    }
+  } else if (Platform.isIOS) {
+    // Untuk iOS, gunakan documents directory
+    final directory = await getApplicationDocumentsDirectory();
+    return directory.path;
+  }
+  return null;
+}
+
+// Buka folder Download (Android saja)
+void _openDownloadsFolder() async {
+  if (Platform.isAndroid) {
+    try {
+      const url = 'content://com.android.externalstorage.documents/document/primary:Download';
+      // Atau gunakan package: https://pub.dev/packages/open_file
+      // await OpenFile.open(url);
+    } catch (e) {
+      print('Error opening folder: $e');
+    }
+  }
+}
+  // GENERATE PDF
+  Future<void> _generatePDF(Map<String, dynamic> pesananData) async {
+    try {
+      // Minta permission storage dulu
+      if (await _requestPermission()) {
+        final pdf = pw.Document();
+
+        pdf.addPage(
+          pw.Page(
+            build: (pw.Context context) {
+              return pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  // Header
+                  pw.Center(
+                    child: pw.Text(
+                      'NOTA LAUNDRY EXPRESS',
+                      style: pw.TextStyle(
+                        fontSize: 20,
+                        fontWeight: pw.FontWeight.bold,
+                        color: PdfColors.blue800,
+                      ),
+                    ),
+                  ),
+                  pw.SizedBox(height: 10),
+                  pw.Divider(),
+                  pw.SizedBox(height: 20),
+
+                  // Informasi Perusahaan
+                  pw.Center(
+                    child: pw.Text(
+                      'LAUNDRY EXPRESS',
+                      style: pw.TextStyle(
+                        fontSize: 16,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  pw.Center(
+                    child: pw.Text(
+                      'Jl. Contoh No. 123, Jakarta',
+                      style: pw.TextStyle(fontSize: 10),
+                    ),
+                  ),
+                  pw.Center(
+                    child: pw.Text(
+                      'Telp: 0812-3456-7890',
+                      style: pw.TextStyle(fontSize: 10),
+                    ),
+                  ),
+                  pw.SizedBox(height: 20),
+                  pw.Divider(),
+                  pw.SizedBox(height: 20),
+
+                  // Informasi Pesanan
+                  _buildPDFRow(
+                    'ID Pesanan',
+                    pesananData['order_id'] ?? pesananData['id'].toString(),
+                  ),
+                  _buildPDFRow(
+                    'Tanggal',
+                    _formatDateForPDF(pesananData['tanggal']),
+                  ),
+                  _buildPDFRow(
+                    'Pelanggan',
+                    _userData?['username'] ?? 'Pelanggan',
+                  ),
+                  _buildPDFRow('Layanan', pesananData['layanan'] ?? 'N/A'),
+                  _buildPDFRow('Status', pesananData['status'] ?? 'pending'),
+                  _buildPDFRow(
+                    'Status Pembayaran',
+                    pesananData['status_pembayaran'] ?? 'pending',
+                  ),
+                  _buildPDFRow('Jumlah', '${pesananData['jumlah'] ?? 0} kg'),
+                  _buildPDFRow(
+                    'Total Harga',
+                    _formatRupiahForPDF(pesananData['total_harga']),
+                  ),
+                  _buildPDFRow(
+                    'Metode',
+                    pesananData['metode_pengambilan'] ?? 'ambil',
+                  ),
+
+                  if (pesananData['alamat_pengambilan'] != null)
+                    _buildPDFRow(
+                      'Alamat',
+                      pesananData['alamat_pengambilan'] ?? '-',
+                    ),
+
+                  pw.SizedBox(height: 30),
+                  pw.Divider(),
+                  pw.SizedBox(height: 20),
+
+                  // Catatan
+                  pw.Container(
+                    width: double.infinity,
+                    padding: pw.EdgeInsets.all(10),
+                    decoration: pw.BoxDecoration(
+                      border: pw.Border.all(color: PdfColors.grey),
+                      borderRadius: pw.BorderRadius.circular(5),
+                    ),
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text(
+                          'Catatan:',
+                          style: pw.TextStyle(
+                            fontWeight: pw.FontWeight.bold,
+                          ),
+                        ),
+                        pw.SizedBox(height: 5),
+                        pw.Text(
+                          '• Simpan nota ini sebagai bukti transaksi\n'
+                          '• Admin akan menghubungi untuk konfirmasi\n'
+                          '• Pembayaran dapat dilakukan via transfer atau tunai',
+                          style: pw.TextStyle(fontSize: 10),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  pw.SizedBox(height: 20),
+                  pw.Center(
+                    child: pw.Text(
+                      'Terima kasih atas kepercayaan Anda!',
+                      style: pw.TextStyle(
+                        fontSize: 12,
+                        fontStyle: pw.FontStyle.italic,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+
+        // Simpan di folder Download
+        final String? downloadsPath = await _getDownloadsDirectory();
+
+        if (downloadsPath != null) {
+          final fileName =
+              'Nota_${pesananData['order_id'] ?? pesananData['id']}.pdf';
+          final file = File('$downloadsPath/$fileName');
+          await file.writeAsBytes(await pdf.save());
+
+          // Show success message
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'PDF berhasil disimpan di Folder Download\n$fileName',
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 4),
+              action: SnackBarAction(
+                label: 'Buka Folder',
+                onPressed: () {
+                  // Buka folder download
+                  _openDownloadsFolder();
+                },
+              ),
+            ),
+          );
+
+          print('PDF saved to: ${file.path}');
+        } else {
+          throw Exception('Tidak bisa mengakses folder Download');
+        }
+
+        // Close modal
+        Navigator.pop(context);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Izin storage dibutuhkan untuk menyimpan PDF'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    } catch (e) {
+      print('PDF Generation Error: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Gagal menyimpan PDF: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  // LOAD FONT YANG SUPPORT UNICODE
+  Future<pw.Font> _loadPdfFont() async {
+    // Gunakan font default yang support Unicode
+    return pw.Font.courier(); // atau pw.Font.helvetica()
+  }
+
+  pw.Widget _buildPDFRow(String label, String value) {
+    return pw.Padding(
+      padding: pw.EdgeInsets.only(bottom: 8),
+      child: pw.Row(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.SizedBox(
+            width: 100,
+            child: pw.Text(
+              '$label:',
+              style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+            ),
+          ),
+          pw.Expanded(child: pw.Text(value)),
+        ],
+      ),
+    );
+  }
+
+  String _formatDateForPDF(String? dateString) {
+    if (dateString == null) return '-';
+    try {
+      final date = DateTime.parse(dateString);
+      return '${date.day}/${date.month}/${date.year}';
+    } catch (e) {
+      return dateString;
+    }
+  }
+
+  String _formatRupiahForPDF(dynamic number) {
+    if (number == null) return 'Rp 0';
+    double? value = double.tryParse(number.toString()) ?? 0.0;
+    final formatCurrency = NumberFormat.currency(
+      locale: 'id_ID',
+      symbol: 'Rp ',
+      decimalDigits: 0,
+    );
+    return formatCurrency.format(value);
   }
 
   String _formatRupiah(dynamic number) {
@@ -86,22 +396,19 @@ class _OrderListPageState extends State<OrderListPage> {
     return formatCurrency.format(value);
   }
 
-  // Method untuk format tanggal yang aman
   String _formatTanggal(String? dateString) {
     if (dateString == null) return '-';
-    
+
     try {
       final date = DateTime.parse(dateString);
-      
-      // Gunakan format yang lebih sederhana jika locale belum siap
+
       if (!_isDateFormatInitialized) {
         return DateFormat('dd/MM/yyyy').format(date);
       }
-      
+
       return DateFormat('dd MMMM yyyy', 'id_ID').format(date);
     } catch (e) {
-      // ApiService._debugPrint('Error formatting date: $e');
-      return dateString; // Kembalikan string asli jika error
+      return dateString;
     }
   }
 
@@ -178,9 +485,7 @@ class _OrderListPageState extends State<OrderListPage> {
           const SizedBox(height: 8),
           const Text(
             'Yuk buat pesanan laundry pertama Anda!',
-            style: TextStyle(
-              color: Colors.grey,
-            ),
+            style: TextStyle(color: Colors.grey),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 20),
@@ -213,11 +518,7 @@ class _OrderListPageState extends State<OrderListPage> {
               color: Colors.red.withOpacity(0.1),
               shape: BoxShape.circle,
             ),
-            child: const Icon(
-              Icons.error_outline,
-              size: 50,
-              color: Colors.red,
-            ),
+            child: const Icon(Icons.error_outline, size: 50, color: Colors.red),
           ),
           const SizedBox(height: 20),
           Text(
@@ -252,12 +553,14 @@ class _OrderListPageState extends State<OrderListPage> {
     );
   }
 
-  Widget _buildOrderCard(Map<String, dynamic> order) {
-    final primaryColor = const Color(0xFF3498db);
-    final statusColor = _getStatusColor(order['status'] ?? 'pending');
-    final paymentStatusColor = _getPaymentStatusColor(order['status_pembayaran'] ?? 'pending');
+Widget _buildOrderCard(Map<String, dynamic> order) {
+  final primaryColor = const Color(0xFF3498db);
+  final statusColor = _getStatusColor(order['status'] ?? 'pending');
+  final paymentStatusColor = _getPaymentStatusColor(order['status_pembayaran'] ?? 'pending');
 
-    return Container(
+  return GestureDetector(
+    onTap: () => _showNotaModal(order),
+    child: Container(
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
@@ -282,135 +585,151 @@ class _OrderListPageState extends State<OrderListPage> {
               ],
             ),
           ),
-          child: Stack(
-            children: [
-              // Background pattern
-              Positioned(
-                right: -20,
-                top: -20,
-                child: Container(
-                  width: 80,
-                  height: 80,
-                  decoration: BoxDecoration(
-                    color: primaryColor.withOpacity(0.05),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-              
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          child: Padding(
+            padding: const EdgeInsets.all(16), // Kurangi padding
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Header dengan ID dan Status - FIX OVERFLOW
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    // Header dengan ID dan Status
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(6),
-                              decoration: BoxDecoration(
-                                color: primaryColor.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Icon(
-                                Icons.local_laundry_service,
-                                color: primaryColor,
-                                size: 20,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              'ORDER #${order['id'] ?? 'N/A'}',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                              ),
-                            ),
-                          ],
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: statusColor.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: statusColor.withOpacity(0.3)),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                _getStatusIcon(order['status'] ?? 'pending'),
-                                color: statusColor,
-                                size: 14,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                (order['status'] ?? 'pending').toString().toUpperCase(),
-                                style: TextStyle(
-                                  color: statusColor,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Informasi Pesanan
-                    _buildOrderDetailRow('Layanan', order['layanan'] ?? '-'),
-                    _buildOrderDetailRow('Berat', '${order['jumlah'] ?? 0} kg'),
-                    _buildOrderDetailRow('Total', _formatRupiah(order['total_harga'])),
-                    
-                    // Tanggal - menggunakan method _formatTanggal yang aman
-                    if (order['tanggal'] != null)
-                      _buildOrderDetailRow(
-                        'Tanggal',
-                        _formatTanggal(order['tanggal']),
-                      ),
-
-                    // Status Pembayaran
-                    const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: paymentStatusColor.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
+                    Expanded(
                       child: Row(
                         children: [
-                          Icon(
-                            order['status_pembayaran'] == 'selesai' 
-                                ? Icons.payment 
-                                : Icons.pending_actions,
-                            color: paymentStatusColor,
-                            size: 16,
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: primaryColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(
+                              Icons.local_laundry_service,
+                              color: primaryColor,
+                              size: 20,
+                            ),
                           ),
                           const SizedBox(width: 8),
-                          Text(
-                            'Pembayaran: ${(order['status_pembayaran'] ?? 'pending').toString().toUpperCase()}',
-                            style: TextStyle(
-                              color: paymentStatusColor,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 12,
+                          Expanded(
+                            child: Text(
+                              'ORDER #${order['order_id'] ?? order['id'] ?? 'N/A'}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14, // Perkecil font
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                         ],
                       ),
                     ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), // Perkecil padding
+                      decoration: BoxDecoration(
+                        color: statusColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: statusColor.withOpacity(0.3)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _getStatusIcon(order['status'] ?? 'pending'),
+                            color: statusColor,
+                            size: 12, // Perkecil icon
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            _getShortStatus(order['status'] ?? 'pending'),
+                            style: TextStyle(
+                              color: statusColor,
+                              fontSize: 10, // Perkecil font
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
 
-                    // Tombol Aksi
+                // Informasi Pesanan
+                _buildOrderDetailRow('Layanan', order['layanan'] ?? '-'),
+                _buildOrderDetailRow('Berat', '${order['jumlah'] ?? 0} kg'),
+                _buildOrderDetailRow('Total', _formatRupiah(order['total_harga'])),
+                
+                // Tanggal
+                if (order['tanggal'] != null)
+                  _buildOrderDetailRow(
+                    'Tanggal',
+                    _formatTanggal(order['tanggal']),
+                  ),
+
+                // Status Pembayaran
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: paymentStatusColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        order['status_pembayaran'] == 'selesai' 
+                            ? Icons.payment 
+                            : Icons.pending_actions,
+                        color: paymentStatusColor,
+                        size: 14,
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          'Pembayaran: ${_getShortPaymentStatus(order['status_pembayaran'] ?? 'pending')}',
+                          style: TextStyle(
+                            color: paymentStatusColor,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 11,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Tombol Aksi
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    // Tombol Lihat Nota
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _showNotaModal(order),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: primaryColor,
+                          side: BorderSide(color: primaryColor),
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        icon: const Icon(Icons.receipt, size: 14),
+                        label: const Text(
+                          'Nota',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    
+                    // Tombol Bayar (jika pending)
                     if (order['status_pembayaran'] == 'pending' && order['status'] != 'batal')
-                      const SizedBox(height: 16),
-                    if (order['status_pembayaran'] == 'pending' && order['status'] != 'batal')
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton(
+                      Expanded(
+                        child: ElevatedButton.icon(
                           onPressed: () {
                             Navigator.push(
                               context,
@@ -422,71 +741,48 @@ class _OrderListPageState extends State<OrderListPage> {
                           style: ElevatedButton.styleFrom(
                             backgroundColor: primaryColor,
                             foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            padding: const EdgeInsets.symmetric(vertical: 8),
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(8),
                             ),
                           ),
-                          child: const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.payment, size: 18),
-                              SizedBox(width: 8),
-                              Text(
-                                'Bayar Sekarang',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-
-                    // Invoice untuk pesanan selesai
-                    if (order['status'] == 'selesai' && order['status_pembayaran'] == 'selesai')
-                      const SizedBox(height: 16),
-                    if (order['status'] == 'selesai' && order['status_pembayaran'] == 'selesai')
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton(
-                          onPressed: () {
-                            // TODO: Implement download invoice
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Fitur download invoice akan segera tersedia'),
-                                backgroundColor: Colors.blue,
-                              ),
-                            );
-                          },
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: primaryColor,
-                            side: BorderSide(color: primaryColor),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          child: const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.download, size: 18),
-                              SizedBox(width: 8),
-                              Text('Download Invoice'),
-                            ],
+                          icon: const Icon(Icons.payment, size: 14),
+                          label: const Text(
+                            'Bayar',
+                            style: TextStyle(fontSize: 12),
                           ),
                         ),
                       ),
                   ],
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
+// Helper methods untuk text pendek
+String _getShortStatus(String status) {
+  switch (status.toLowerCase()) {
+    case 'pending': return 'PENDING';
+    case 'proses': return 'PROSES';
+    case 'selesai': return 'SELESAI';
+    case 'batal': return 'BATAL';
+    default: return status.toUpperCase();
+  }
+}
+
+String _getShortPaymentStatus(String status) {
+  switch (status.toLowerCase()) {
+    case 'pending': return 'PENDING';
+    case 'selesai': return 'LUNAS';
+    case 'gagal': return 'GAGAL';
+    default: return status.toUpperCase();
+  }
+}
   Widget _buildOrderDetailRow(String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -500,12 +796,7 @@ class _OrderListPageState extends State<OrderListPage> {
               color: Colors.grey[600],
             ),
           ),
-          Text(
-            value,
-            style: const TextStyle(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
         ],
       ),
     );
@@ -513,7 +804,6 @@ class _OrderListPageState extends State<OrderListPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Tampilkan loading sampai date formatting siap
     if (_isLoading || !_isDateFormatInitialized) {
       return _buildLoadingState();
     }
@@ -523,10 +813,7 @@ class _OrderListPageState extends State<OrderListPage> {
       appBar: AppBar(
         title: const Text(
           'Daftar Pesanan Saya',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
+          style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
         ),
         backgroundColor: const Color(0xFF3498db),
         elevation: 0,
@@ -542,8 +829,8 @@ class _OrderListPageState extends State<OrderListPage> {
       body: _hasError
           ? _buildErrorState()
           : _pesananList.isEmpty
-              ? _buildEmptyState()
-              : _buildOrderList(),
+          ? _buildEmptyState()
+          : _buildOrderList(),
     );
   }
 
@@ -557,12 +844,6 @@ class _OrderListPageState extends State<OrderListPage> {
             valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF3498db)),
           ),
           const SizedBox(height: 16),
-          // Text(
-          //   _isDateFormatInitialized ? 'Memuat pesanan...' : 'Menyiapkan aplikasi...',
-          //   style: TextStyle(
-          //     color: Colors.grey[600],
-          //   ),
-          // ),
         ],
       ),
     );
@@ -619,10 +900,7 @@ class _OrderListPageState extends State<OrderListPage> {
                       children: [
                         const Text(
                           'Total Pesanan',
-                          style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 14,
-                          ),
+                          style: TextStyle(color: Colors.white70, fontSize: 14),
                         ),
                         Text(
                           '${_pesananList.length} Pesanan',
@@ -645,5 +923,209 @@ class _OrderListPageState extends State<OrderListPage> {
         ),
       ),
     );
+  }
+}
+
+// WIDGET MODAL NOTA (SAMA DENGAN YANG DI ORDERSCREEN)
+class NotaModal extends StatelessWidget {
+  final Map<String, dynamic> pesananData;
+  final Map<String, dynamic> userData;
+  final Function(Map<String, dynamic>) onDownloadPDF;
+
+  const NotaModal({
+    super.key,
+    required this.pesananData,
+    required this.userData,
+    required this.onDownloadPDF,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(24),
+          topRight: Radius.circular(24),
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Center(
+            child: Container(
+              width: 60,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Title
+          const Center(
+            child: Text(
+              'NOTA PESANAN',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF3498db),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Info Pesanan
+          _buildNotaItem(
+            'ID Pesanan',
+            pesananData['order_id'] ?? pesananData['id'].toString(),
+          ),
+          _buildNotaItem('Tanggal', _formatDate(pesananData['tanggal'])),
+          _buildNotaItem('Pelanggan', userData['username'] ?? 'N/A'),
+          _buildNotaItem('Layanan', pesananData['layanan'] ?? 'N/A'),
+          _buildNotaItem('Status', pesananData['status'] ?? 'pending'),
+          _buildNotaItem(
+            'Status Pembayaran',
+            pesananData['status_pembayaran'] ?? 'pending',
+          ),
+          _buildNotaItem('Jumlah', '${pesananData['jumlah'] ?? 0} kg'),
+          _buildNotaItem(
+            'Total Harga',
+            _formatRupiah(pesananData['total_harga']),
+          ),
+          _buildNotaItem(
+            'Metode Pengambilan',
+            pesananData['metode_pengambilan'] ?? 'ambil',
+          ),
+
+          if (pesananData['alamat_pengambilan'] != null)
+            _buildNotaItem('Alamat', pesananData['alamat_pengambilan'] ?? '-'),
+
+          const SizedBox(height: 20),
+          const Divider(),
+          const SizedBox(height: 16),
+
+          // Informasi Tambahan
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF3498db).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Column(
+              children: [
+                Text(
+                  '📝 Informasi',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF3498db),
+                  ),
+                ),
+                SizedBox(height: 8),
+                Text(
+                  'Nota ini dapat didownload dalam format PDF untuk keperluan dokumentasi.',
+                  style: TextStyle(fontSize: 12),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          // Tombol Aksi
+          Row(
+            children: [
+              // Tombol Tutup
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF3498db),
+                    side: const BorderSide(color: Color(0xFF3498db)),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text('Tutup'),
+                ),
+              ),
+              const SizedBox(width: 12),
+
+              // Tombol Download PDF
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () => onDownloadPDF(pesananData),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF3498db),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: const Icon(Icons.download, size: 20),
+                  label: const Text('Download PDF'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNotaItem(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(
+              '$label:',
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                color: Colors.grey,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(fontWeight: FontWeight.w500),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDate(String? dateString) {
+    if (dateString == null) return '-';
+    try {
+      final date = DateTime.parse(dateString);
+      return '${date.day}/${date.month}/${date.year}';
+    } catch (e) {
+      return dateString;
+    }
+  }
+
+  String _formatRupiah(dynamic number) {
+    if (number == null) return 'Rp 0';
+    double? value = double.tryParse(number.toString()) ?? 0.0;
+    final formatCurrency = NumberFormat.currency(
+      locale: 'id_ID',
+      symbol: 'Rp ',
+      decimalDigits: 0,
+    );
+    return formatCurrency.format(value);
   }
 }

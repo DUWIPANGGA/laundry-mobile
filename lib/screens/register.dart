@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:laundry_mobile/screens/email_verification.dart';
 import 'package:laundry_mobile/services/api_service.dart';
+import 'package:laundry_mobile/services/auth_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -17,7 +19,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final TextEditingController _password = TextEditingController();
   final TextEditingController _confirmPassword = TextEditingController();
   final TextEditingController _address = TextEditingController();
-  final TextEditingController _verifikasiKode = TextEditingController();
 
   bool _isLoading = false;
   String? _errorMessage;
@@ -39,69 +40,44 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    if (_verifikasiKode.text != '12345') {
-      setState(() {
-        _errorMessage = 'Kode verifikasi salah. Silakan masukkan 12345';
-      });
-      return;
-    }
-
     setState(() {
       _isLoading = true;
       _errorMessage = null;
     });
 
-    ApiService.debugPrint('📤 REGISTER REQUEST:');
-    ApiService.debugPrint('   Username: ${_username.text}');
-    ApiService.debugPrint('   Email: ${_email.text}');
-    ApiService.debugPrint('   Address: ${_address.text}');
-
     try {
-      final response = await ApiService.register(
-        _username.text.trim(),
-        _email.text.trim(),
-        _password.text.trim(),
-        _address.text.trim(),
+      final response = await AuthService.register(
+        username: _username.text.trim(),
+        email: _email.text.trim(),
+        password: _password.text.trim(),
+        address: _address.text.trim(),
       );
 
-      ApiService.debugPrint('📥 REGISTER RESPONSE: ${response['success']}');
-
       if (response['success'] == true) {
-        // Auto login setelah registrasi berhasil
-        final loginResponse = await ApiService.login(
-          _username.text.trim(),
-          _password.text.trim(),
+        // SELALU redirect ke screen verifikasi email setelah registrasi berhasil
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => EmailVerificationScreen(
+              email: _email.text.trim(),
+              fromRegistration: true,
+            ),
+          ),
         );
-
-        if (loginResponse['success'] == true) {
-          Navigator.pushNamedAndRemoveUntil(
-            context, 
-            '/dashboard', 
-            (route) => false
-          );
-          
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('✅ Registrasi berhasil! Silakan login.'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        } else {
-          Navigator.pop(context);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('✅ Registrasi berhasil! Silakan login.'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
+        
+        // Show success message
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ Registrasi berhasil! Silakan verifikasi email Anda.'),
+            backgroundColor: Colors.green,
+          ),
+        );
       } else {
         setState(() {
           _errorMessage = response['message'] ?? 'Registrasi gagal. Silakan coba lagi.';
         });
       }
     } catch (e) {
-      ApiService.debugPrint('💥 REGISTER ERROR: $e');
       setState(() {
         _errorMessage = 'Terjadi kesalahan: $e';
       });
@@ -131,7 +107,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _password.dispose();
     _confirmPassword.dispose();
     _address.dispose();
-    _verifikasiKode.dispose();
     super.dispose();
   }
 
@@ -294,6 +269,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               if (value == null || value.isEmpty) {
                                 return 'Konfirmasi password wajib diisi';
                               }
+                              if (value != _password.text) {
+                                return 'Password tidak cocok';
+                              }
                               return null;
                             },
                           ),
@@ -303,6 +281,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             controller: _address,
                             label: "Alamat",
                             icon: Icons.home_outlined,
+                            maxLines: 2,
                             validator: (value) {
                               if (value == null || value.isEmpty) {
                                 return 'Alamat wajib diisi';
@@ -310,42 +289,44 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               return null;
                             },
                           ),
-                          const SizedBox(height: 16),
                           
-                          _buildTextField(
-                            controller: _verifikasiKode,
-                            label: "Kode Verifikasi",
-                            icon: Icons.verified_outlined,
-                            keyboardType: TextInputType.number,
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Kode verifikasi wajib diisi';
-                              }
-                              return null;
-                            },
-                          ),
-                          
-                          // Verification Code Hint
+                          const SizedBox(height: 20),
+
+                          // Info Verifikasi Email
                           Container(
                             width: double.infinity,
-                            margin: const EdgeInsets.only(top: 8, bottom: 16),
-                            padding: const EdgeInsets.all(12),
+                            padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
-                              color: Colors.orange.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                              color: Colors.blue.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.blue.withOpacity(0.3)),
                             ),
-                            child: const Row(
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Icon(Icons.info_outline, size: 16, color: Colors.orange),
-                                SizedBox(width: 8),
+                                Icon(Icons.info_outline, size: 20, color: Colors.blue.shade700),
+                                const SizedBox(width: 12),
                                 Expanded(
-                                  child: Text(
-                                    'Gunakan kode verifikasi: 12345',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.orange,
-                                    ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Verifikasi Email Diperlukan',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.blue.shade700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'Setelah registrasi, kami akan mengirim kode OTP ke email Anda untuk verifikasi.',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.blue.shade600,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],
@@ -354,6 +335,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
                           // Error Message
                           if (_errorMessage != null) ...[
+                            const SizedBox(height: 16),
                             Container(
                               width: double.infinity,
                               padding: const EdgeInsets.all(12),
@@ -378,8 +360,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 ],
                               ),
                             ),
-                            const SizedBox(height: 16),
                           ],
+
+                          const SizedBox(height: 20),
 
                           // Register Button
                           SizedBox(
@@ -456,12 +439,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
     required IconData icon,
     bool isPassword = false,
     TextInputType keyboardType = TextInputType.text,
+    int maxLines = 1,
     String? Function(String?)? validator,
   }) {
     return TextFormField(
       controller: controller,
       obscureText: isPassword,
       keyboardType: keyboardType,
+      maxLines: maxLines,
       validator: validator,
       decoration: InputDecoration(
         labelText: label,

@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:laundry_mobile/screens/email_verification.dart';
 import 'package:laundry_mobile/services/api_service.dart';
+import 'package:laundry_mobile/services/auth_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dashboard.dart';
 import 'register.dart';
@@ -18,53 +20,63 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _loading = false;
   String? _errorMessage;
 
-  Future<void> _loginApi() async {
-    if (_usernameController.text.isEmpty || _passwordController.text.isEmpty) {
-      setState(() {
-        _errorMessage = "Username dan password harus diisi";
-      });
-      return;
-    }
-
+Future<void> _loginApi() async {
+  if (_usernameController.text.isEmpty || _passwordController.text.isEmpty) {
     setState(() {
-      _loading = true;
-      _errorMessage = null;
+      _errorMessage = "Username dan password harus diisi";
     });
-
-    try {
-      // GUNAKAN ApiService untuk login
-      final response = await ApiService.login(
-        _usernameController.text.trim(),
-        _passwordController.text.trim(),
-      );
-
-      if (response['success'] == true) {
-        // Navigate ke dashboard
-        final userData = response['data']['user'];
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => DashboardScreen(
-              username: userData['username'] ?? "User",
-            ),
-          ),
-        );
-      } else {
-        setState(() {
-          _errorMessage = response['message'] ?? "Login gagal. Periksa username dan password.";
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _errorMessage = "Login gagal: $e";
-      });
-    } finally {
-      setState(() {
-        _loading = false;
-      });
-    }
+    return;
   }
 
+  setState(() {
+    _loading = true;
+    _errorMessage = null;
+  });
+
+  try {
+    // GUNAKAN AuthService untuk login
+    final response = await AuthService.login(
+      _usernameController.text.trim(),
+      _passwordController.text.trim(),
+    );
+
+    if (response['success'] == true) {
+      // Navigate ke dashboard
+      final userData = response['data']['user'];
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => DashboardScreen(
+            username: userData['username'] ?? "User",
+          ),
+        ),
+      );
+    } else if (response['needs_verification'] == true) {
+      // Redirect ke screen verifikasi email
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => EmailVerificationScreen(
+            email: response['email'],
+            fromRegistration: false,
+          ),
+        ),
+      );
+    } else {
+      setState(() {
+        _errorMessage = response['message'] ?? "Login gagal. Periksa username dan password.";
+      });
+    }
+  } catch (e) {
+    setState(() {
+      _errorMessage = "Login gagal: $e";
+    });
+  } finally {
+    setState(() {
+      _loading = false;
+    });
+  }
+}
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;

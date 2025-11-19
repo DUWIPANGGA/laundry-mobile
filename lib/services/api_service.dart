@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiService {
-  static const String baseUrl = "http://192.168.0.101:8000/api";
+  static const String baseUrl = "http://192.168.0.100:8000/api";
   
   // Debug mode
   static const bool debugMode = true;
@@ -30,23 +30,93 @@ class ApiService {
       "Authorization": "Bearer $token",
     };
   }
+// ============ EMAIL VERIFICATION ENDPOINTS ============
 
-  // Helper method to handle response
-  static dynamic _handleResponse(http.Response response) {
-    _debugPrint('📥 RESPONSE RECEIVED:');
-    _debugPrint('   URL: ${response.request?.url}');
-    _debugPrint('   Status: ${response.statusCode}');
-    _debugPrint('   Headers: ${response.headers}');
-    _debugPrint('   Body: ${response.body}');
+static Future<Map<String, dynamic>> verifyEmail(String email, String otp) async {
+  try {
+    final url = "$baseUrl/verify-email";
+    final body = jsonEncode({
+      "email": email,
+      "otp": otp,
+    });
+
+    _debugPrint('📤 VERIFY EMAIL REQUEST:');
+    _debugPrint('   URL: $url');
+    _debugPrint('   Body: $body');
+
+    final response = await http.post(
+      Uri.parse(url),
+      headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+      },
+      body: body,
+    );
+
+    final data = _handleResponse(response);
     
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      return jsonDecode(response.body);
-    } else {
-      _debugPrint('❌ ERROR: Request failed with status ${response.statusCode}');
-      throw Exception("Request failed (${response.statusCode}): ${response.body}");
+    // Save token jika verifikasi berhasil
+    if (data['success'] == true) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('token', data['data']['token']);
+      await prefs.setString('user', jsonEncode(data['data']['user']));
+      _debugPrint('✅ EMAIL VERIFIED: Token saved for ${data['data']['user']['username']}');
     }
+    
+    return data;
+  } catch (e) {
+    _debugPrint('💥 VERIFY EMAIL EXCEPTION: $e');
+    throw Exception("Verify email error: $e");
   }
+}
 
+static Future<Map<String, dynamic>> resendOtp(String email) async {
+  try {
+    final url = "$baseUrl/resend-otp";
+    final body = jsonEncode({
+      "email": email,
+    });
+
+    _debugPrint('📤 RESEND OTP REQUEST:');
+    _debugPrint('   URL: $url');
+    _debugPrint('   Body: $body');
+
+    final response = await http.post(
+      Uri.parse(url),
+      headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+      },
+      body: body,
+    );
+
+    return _handleResponse(response);
+  } catch (e) {
+    _debugPrint('💥 RESEND OTP EXCEPTION: $e');
+    throw Exception("Resend OTP error: $e");
+  }
+}
+  // Helper method to handle response
+// Helper method to handle response
+static dynamic _handleResponse(http.Response response) {
+  _debugPrint('📥 RESPONSE RECEIVED:');
+  _debugPrint('   URL: ${response.request?.url}');
+  _debugPrint('   Status: ${response.statusCode}');
+  _debugPrint('   Headers: ${response.headers}');
+  _debugPrint('   Body: ${response.body}');
+  
+  if (response.statusCode == 200 || response.statusCode == 201) {
+    return jsonDecode(response.body);
+  } else if (response.statusCode == 403) {
+    // Handle forbidden (email not verified)
+    final data = jsonDecode(response.body);
+    _debugPrint('❌ FORBIDDEN: ${data['message']}');
+    return data;
+  } else {
+    _debugPrint('❌ ERROR: Request failed with status ${response.statusCode}');
+    throw Exception("Request failed (${response.statusCode}): ${response.body}");
+  }
+}
   // ============ AUTH ENDPOINTS ============
   static Future<Map<String, dynamic>> login(String username, String password) async {
     try {

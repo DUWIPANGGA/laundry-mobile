@@ -1,7 +1,11 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:laundry_mobile/services/api_service.dart';
+import 'package:pdf/pdf.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
 
 class OrderScreen extends StatefulWidget {
   final String username;
@@ -36,7 +40,7 @@ class _OrderScreenState extends State<OrderScreen> {
         _userData = userData;
       });
     } catch (e) {
-      // ApiService._debugPrint('Error loading user data: $e');
+      print('Error loading user data: $e');
     }
   }
 
@@ -50,7 +54,7 @@ class _OrderScreenState extends State<OrderScreen> {
         });
       }
     } catch (e) {
-      // ApiService._debugPrint('Error loading harga: $e');
+      print('Error loading harga: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Gagal memuat data layanan: $e')),
       );
@@ -166,7 +170,7 @@ class _OrderScreenState extends State<OrderScreen> {
       final pesananData = {
         'layanan': _selectedLayanan!,
         'tanggal': tanggalFormatted,
-        'metode_pengambilan': 'ambil', // Default, bisa diubah nanti
+        'metode_pengambilan': 'ambil',
         'alamat_pengambilan': alamat,
       };
 
@@ -179,6 +183,9 @@ class _OrderScreenState extends State<OrderScreen> {
           _isConfirming = true;
         });
         
+        // TAMPILKAN MODAL NOTA SETELAH BERHASIL
+        _showNotaModal(response['data']);
+        
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text("Pesanan berhasil dibuat!"),
@@ -186,16 +193,6 @@ class _OrderScreenState extends State<OrderScreen> {
           ),
         );
 
-        // Delay sebentar sebelum navigasi (opsional)
-        await Future.delayed(const Duration(seconds: 1));
-        
-        // Navigate to confirmation page or order list
-        // Navigator.pushReplacement(
-        //   context,
-        //   MaterialPageRoute(
-        //     builder: (_) => OrderListPage(), // Ganti dengan halaman yang sesuai
-        //   ),
-        // );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -213,6 +210,144 @@ class _OrderScreenState extends State<OrderScreen> {
       );
     } finally {
       setState(() => _loading = false);
+    }
+  }
+
+  // MODAL BOTTOM SHEET UNTUK NOTA
+  void _showNotaModal(Map<String, dynamic> pesananData) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => NotaModal(
+        pesananData: pesananData,
+        userData: _userData!,
+        onDownloadPDF: _generatePDF,
+      ),
+    );
+  }
+
+  // GENERATE PDF
+  Future<void> _generatePDF(Map<String, dynamic> pesananData) async {
+    try {
+      final pdf = pw.Document();
+
+      // Add content to PDF
+      pdf.addPage(
+        pw.Page(
+          build: (pw.Context context) {
+            return pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                // Header
+                pw.Center(
+                  child: pw.Text(
+                    'NOTA LAUNDRY',
+                    style: pw.TextStyle(
+                      fontSize: 24,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.blue800,
+                    ),
+                  ),
+                ),
+                pw.SizedBox(height: 10),
+                pw.Divider(),
+                pw.SizedBox(height: 20),
+
+                // Informasi Pesanan
+                _buildPDFRow('ID Pesanan', pesananData['order_id'] ?? 'N/A'),
+                _buildPDFRow('Tanggal', _formatDateForPDF(pesananData['tanggal'])),
+                _buildPDFRow('Pelanggan', _userData?['username'] ?? widget.username),
+                _buildPDFRow('Layanan', pesananData['layanan'] ?? 'N/A'),
+                _buildPDFRow('Status', pesananData['status'] ?? 'pending'),
+                _buildPDFRow('Metode Pengambilan', pesananData['metode_pengambilan'] ?? 'ambil'),
+                
+                if (pesananData['alamat_pengambilan'] != null)
+                  _buildPDFRow('Alamat', pesananData['alamat_pengambilan'] ?? '-'),
+
+                pw.SizedBox(height: 30),
+                pw.Divider(),
+                pw.SizedBox(height: 20),
+
+                // Footer
+                pw.Center(
+                  child: pw.Text(
+                    'Terima kasih telah menggunakan layanan kami!',
+                    style: pw.TextStyle(
+                      fontSize: 12,
+                      fontStyle: pw.FontStyle.italic,
+                    ),
+                  ),
+                ),
+                pw.SizedBox(height: 10),
+                pw.Center(
+                  child: pw.Text(
+                    'Admin akan menghubungi untuk konfirmasi lebih lanjut',
+                    style: const pw.TextStyle(fontSize: 10),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+
+      // Save PDF
+      final output = await getTemporaryDirectory();
+      final file = File("${output.path}/nota_${pesananData['order_id'] ?? pesananData['id']}.pdf");
+      await file.writeAsBytes(await pdf.save());
+
+      // Show success message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('PDF berhasil didownload!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      // Close modal
+      Navigator.pop(context);
+
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Gagal generate PDF: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  pw.Widget _buildPDFRow(String label, String value) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.only(bottom: 8),
+      child: pw.Row(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.SizedBox(
+            width: 100,
+            child: pw.Text(
+              '$label:',
+              style: pw.TextStyle(
+                fontWeight: pw.FontWeight.bold,
+              ),
+            ),
+          ),
+          pw.Expanded(
+            child: pw.Text(value),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDateForPDF(String? dateString) {
+    if (dateString == null) return '-';
+    try {
+      final date = DateTime.parse(dateString);
+      return '${date.day}/${date.month}/${date.year}';
+    } catch (e) {
+      return dateString;
     }
   }
 
@@ -652,6 +787,192 @@ class _OrderScreenState extends State<OrderScreen> {
         ],
       ),
     );
+  }
+}
+
+// WIDGET MODAL NOTA
+class NotaModal extends StatelessWidget {
+  final Map<String, dynamic> pesananData;
+  final Map<String, dynamic> userData;
+  final Function(Map<String, dynamic>) onDownloadPDF;
+
+  const NotaModal({
+    super.key,
+    required this.pesananData,
+    required this.userData,
+    required this.onDownloadPDF,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(24),
+          topRight: Radius.circular(24),
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Center(
+            child: Container(
+              width: 60,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          
+          // Title
+          const Center(
+            child: Text(
+              'NOTA PESANAN',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF3498db),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Info Pesanan
+          _buildNotaItem('ID Pesanan', pesananData['order_id'] ?? 'N/A'),
+          _buildNotaItem('Tanggal', _formatDate(pesananData['tanggal'])),
+          _buildNotaItem('Pelanggan', userData['username'] ?? 'N/A'),
+          _buildNotaItem('Layanan', pesananData['layanan'] ?? 'N/A'),
+          _buildNotaItem('Status', pesananData['status'] ?? 'pending'),
+          _buildNotaItem(
+            'Metode Pengambilan', 
+            pesananData['metode_pengambilan'] ?? 'ambil'
+          ),
+          
+          if (pesananData['alamat_pengambilan'] != null)
+            _buildNotaItem(
+              'Alamat', 
+              pesananData['alamat_pengambilan'] ?? '-'
+            ),
+
+          const SizedBox(height: 20),
+          const Divider(),
+          const SizedBox(height: 16),
+
+          // Informasi Tambahan
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF3498db).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Column(
+              children: [
+                Text(
+                  '📝 Informasi',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF3498db),
+                  ),
+                ),
+                SizedBox(height: 8),
+                Text(
+                  'Admin akan menghubungi Anda untuk konfirmasi jumlah dan total harga yang harus dibayar.',
+                  style: TextStyle(fontSize: 12),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          // Tombol Aksi
+          Row(
+            children: [
+              // Tombol Tutup
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF3498db),
+                    side: const BorderSide(color: Color(0xFF3498db)),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text('Tutup'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              
+              // Tombol Download PDF
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () => onDownloadPDF(pesananData),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF3498db),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: const Icon(Icons.download, size: 20),
+                  label: const Text('Download PDF'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNotaItem(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(
+              '$label:',
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                color: Colors.grey,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDate(String? dateString) {
+    if (dateString == null) return '-';
+    try {
+      final date = DateTime.parse(dateString);
+      return '${date.day}/${date.month}/${date.year}';
+    } catch (e) {
+      return dateString;
+    }
   }
 }
 
